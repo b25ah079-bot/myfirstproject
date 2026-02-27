@@ -1,216 +1,459 @@
 import streamlit as st
-import sqlite3
-from geopy.distance import geodesic
+import pandas as pd
 import difflib
-import calendar
+from geopy.distance import geodesic
 from datetime import datetime
+import streamlit.components.v1 as components
+import calendar
 
+# ────────────────────────────────────────────────
+# CONFIGURATION & SHARED CATALOG
+# ────────────────────────────────────────────────
 st.set_page_config(page_title="LowKey Deals", layout="wide", page_icon="✨")
 
-# ======================================================
-# DATABASE SETUP
-# ======================================================
+@st.cache_resource
+def get_shared_catalog():
+    return {}
 
-conn = sqlite3.connect("lowkey_deals.db", check_same_thread=False)
-cursor = conn.cursor()
+GLOBAL_CATALOG = get_shared_catalog()
 
-def create_tables():
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS users (
-        username TEXT PRIMARY KEY,
-        password TEXT,
-        role TEXT
-    )
-    """)
+def apply_theme():
+    st.markdown("""
+        <style>
+        html, body, [data-testid="stHeader"], .stMarkdown, p, h1, h2, h3, h4, h5, h6, label, span, .stRadio p {
+            color: #000000 !important;
+            font-weight: 500;
+        }
+        .stApp { background-color: #FFFFFF; }
+        .deal-card {
+            background-color: #FFFFFF;
+            padding: 20px;
+            border-radius: 15px;
+            border-top: 4px solid #8B4513;
+            margin-bottom: 16px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.08);
+            transition: all 0.25s ease;
+        }
+        .deal-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.12);
+        }
+        .price-tag {
+            color: #8B4513;
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+        .badge {
+            padding: 6px 10px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            background: #FFE4B5;
+            color: #8B4513;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%,100% { transform: scale(1); }
+            50%     { transform: scale(1.04); }
+        }
+        input, textarea {
+            color: #000 !important;
+            background: #fff !important;
+            border: 2px solid #8B4513 !important;
+            border-radius: 8px !important;
+        }
+        div.stButton > button {
+            background: #8B4513 !important;
+            color: white !important;
+            border-radius: 999px !important;
+            font-weight: 600;
+            padding: 0.6rem 1.4rem !important;
+            transition: all 0.2s;
+        }
+        div.stButton > button:hover {
+            background: #A0522D !important;
+            transform: scale(1.04);
+        }
+        </style>
+    """, unsafe_allow_html=True)
 
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS sellers (
-        username TEXT PRIMARY KEY,
-        store_name TEXT,
-        address TEXT,
-        lat REAL,
-        lon REAL,
-        open_from INTEGER,
-        open_to INTEGER
-    )
-    """)
+# ────────────────────────────────────────────────
+# INITIAL DATA SETUP
+# ────────────────────────────────────────────────
+def init_data():
+    if "users" not in st.session_state:
+        st.session_state.users = {"user1": "pass1"}
 
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS products (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        description TEXT,
-        price REAL,
-        sale_price REAL,
-        store_username TEXT
-    )
-    """)
+    if "sellers" not in st.session_state:
+        st.session_state.sellers = {
+            "seller1": {
+                "password": "pass1",
+                "store_name": "Appliance World",
+                "loc": (9.95, 76.29),
+                "open_hours": (9, 21),
+                "open_days": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"],
+                "address": "123 Kochi St, Kerala"
+            },
+            "seller2": {
+                "password": "pass2",
+                "store_name": "Home Mart",
+                "loc": (9.93, 76.27),
+                "open_hours": (10, 22),
+                "open_days": ["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"],
+                "address": "456 Ernakulam Rd, Kerala"
+            }
+        }
 
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS reviews (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        product_id INTEGER,
-        username TEXT,
-        rating INTEGER,
-        comment TEXT
-    )
-    """)
-    conn.commit()
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
 
-create_tables()
+    if "user_location" not in st.session_state:
+        st.session_state.user_location = (9.9312, 76.2673)
 
-# ======================================================
-# AUTH
-# ======================================================
+    if "role" not in st.session_state:
+        st.session_state.role = None
 
-def login_page():
-    st.title("🔐 Login")
-
-    role = st.radio("Login As", ["User", "Seller"])
-    username = st.text_input("Username")
-    password = st.text_input("Password", type="password")
-
-    if st.button("Login"):
-        cursor.execute("SELECT * FROM users WHERE username=? AND password=? AND role=?",
-                       (username, password, role))
-        user = cursor.fetchone()
-        if user:
-            st.session_state.authenticated = True
-            st.session_state.username = username
-            st.session_state.role = role
-            st.rerun()
-        else:
-            st.error("Invalid credentials")
-
-    st.divider()
-    st.subheader("Sign Up")
-
-    new_user = st.text_input("New Username")
-    new_pass = st.text_input("New Password", type="password")
-    new_role = st.radio("Role", ["User", "Seller"], key="signup_role")
-
-    if st.button("Create Account"):
-        try:
-            cursor.execute("INSERT INTO users VALUES (?, ?, ?)",
-                           (new_user, new_pass, new_role))
-            conn.commit()
-            st.success("Account created! Please login.")
-        except:
-            st.error("Username already exists")
-
-# ======================================================
-# SELLER DASHBOARD
-# ======================================================
-
-def seller_dashboard():
+# ────────────────────────────────────────────────
+# SELLER — MANAGE INVENTORY
+# ────────────────────────────────────────────────
+def admin_page():
     st.title("📦 Manage Inventory")
 
-    cursor.execute("SELECT * FROM sellers WHERE username=?", (st.session_state.username,))
-    seller = cursor.fetchone()
+    if 'store_info' not in st.session_state or not st.session_state.store_info:
+        st.error("Store information missing. Please log out and log in again.")
+        return
 
-    if not seller:
-        st.subheader("Setup Store")
-        store_name = st.text_input("Store Name")
-        address = st.text_input("Address")
-        lat = st.number_input("Latitude", value=9.93)
-        lon = st.number_input("Longitude", value=76.27)
-        open_from = st.number_input("Open From (0-23)", 0, 23, 9)
-        open_to = st.number_input("Close At (0-23)", 0, 23, 21)
+    store = st.session_state.store_info
+    st.markdown(f"**Store:** {store['store_name']}  •  {store['address']}")
 
-        if st.button("Save Store"):
-            cursor.execute("""
-            INSERT INTO sellers VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (st.session_state.username, store_name, address, lat, lon, open_from, open_to))
-            conn.commit()
-            st.success("Store Created!")
+    with st.expander("Bulk upload via CSV"):
+        st.caption("Columns: name, desc, price, sale_price (optional)")
+        uploaded = st.file_uploader("Choose CSV file", type="csv")
+
+        if uploaded:
+            try:
+                df = pd.read_csv(uploaded)
+                count = 0
+                for _, row in df.iterrows():
+                    name = str(row.get("name", "")).strip()
+                    if not name: continue
+
+                    price = float(row.get("price", 0))
+                    sale_price_val = float(row.get("sale_price", 0))
+                    is_sale = sale_price_val > 0 and sale_price_val < price
+
+                    offer = {
+                        "seller_username": st.session_state.username,
+                        "store": store["store_name"],
+                        "address": store["address"],
+                        "loc": store["loc"],
+                        "price": price,
+                        "sale_price": sale_price_val if is_sale else None,
+                        "is_sale": is_sale,
+                        "desc": str(row.get("desc", "")).strip(),
+                        "reviews": [],
+                        "open_hours": store["open_hours"],
+                        "open_days": store["open_days"]
+                    }
+
+                    if name not in GLOBAL_CATALOG:
+                        GLOBAL_CATALOG[name] = []
+
+                    replaced = False
+                    for i, ex in enumerate(GLOBAL_CATALOG[name]):
+                        if ex.get("seller_username") == st.session_state.username:
+                            GLOBAL_CATALOG[name][i] = offer
+                            replaced = True
+                            break
+                    if not replaced:
+                        GLOBAL_CATALOG[name].append(offer)
+                    count += 1
+
+                if count > 0:
+                    st.success(f"Processed {count} items")
+                    st.rerun()
+
+            except Exception as e:
+                st.error(f"Error: {e}")
+
+    st.divider()
+
+    st.subheader("Add / Update Single Item")
+    with st.form("single_item"):
+        c1, c2 = st.columns([3,2])
+        name = c1.text_input("Product Name")
+        price = c2.number_input("Regular Price (₹)", min_value=0.0, step=100.0)
+        sale_price = c2.number_input("Sale Price (optional)", min_value=0.0, step=100.0)
+        desc = st.text_area("Description")
+
+        if st.form_submit_button("Save"):
+            if not name.strip():
+                st.error("Product name is required")
+                return
+
+            is_sale = sale_price > 0 and sale_price < price
+            offer = {
+                "seller_username": st.session_state.username,
+                "store": store["store_name"],
+                "address": store["address"],
+                "loc": store["loc"],
+                "price": price,
+                "sale_price": sale_price if is_sale else None,
+                "is_sale": is_sale,
+                "desc": desc.strip(),
+                "reviews": [],
+                "open_hours": store["open_hours"],
+                "open_days": store["open_days"]
+            }
+
+            if name not in GLOBAL_CATALOG:
+                GLOBAL_CATALOG[name] = []
+
+            updated = False
+            for i, ex in enumerate(GLOBAL_CATALOG[name]):
+                if ex.get("seller_username") == st.session_state.username:
+                    GLOBAL_CATALOG[name][i] = offer
+                    updated = True
+                    break
+            if not updated:
+                GLOBAL_CATALOG[name].append(offer)
+
+            st.success("Product saved/updated")
             st.rerun()
-        return
 
-    st.subheader("Add Product")
+# ────────────────────────────────────────────────
+# USER HOME PAGE
+# ────────────────────────────────────────────────
+def home_page():
+    st.subheader("🗺️ Your Location")
+    st.write("Share your location for accurate distance calculation")
 
-    name = st.text_input("Product Name")
-    desc = st.text_area("Description")
-    price = st.number_input("Price", min_value=0.0)
-    sale_price = st.number_input("Sale Price", min_value=0.0)
+    if st.session_state.get("role") == "User":
+        components.html("""
+            <button onclick="getLocation()" style="background:#8B4513;color:white;padding:10px 20px;border:none;border-radius:20px;cursor:pointer;">
+                Get My Location
+            </button>
+            <script>
+            function getLocation() {
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(showPosition, showError);
+                } else {
+                    alert("Geolocation is not supported.");
+                }
+            }
+            function showPosition(position) {
+                const lat = position.coords.latitude;
+                const lon = position.coords.longitude;
+                const url = new URL(window.parent.location);
+                url.searchParams.set('lat', lat);
+                url.searchParams.set('lon', lon);
+                window.parent.location = url;
+            }
+            function showError(error) {
+                alert("Error: " + error.message);
+            }
+            </script>
+        """, height=70)
 
-    if st.button("Add Product"):
-        cursor.execute("""
-        INSERT INTO products (name, description, price, sale_price, store_username)
-        VALUES (?, ?, ?, ?, ?)
-        """, (name, desc, price, sale_price, st.session_state.username))
-        conn.commit()
-        st.success("Product Added!")
+    query_params = st.query_params
+    if 'lat' in query_params and 'lon' in query_params:
+        try:
+            lat = float(query_params['lat'][0])
+            lon = float(query_params['lon'][0])
+            st.session_state.user_location = (lat, lon)
+            st.success(f"Location updated: {lat:.5f}, {lon:.5f}")
+        except:
+            st.warning("Could not read location from URL.")
 
-# ======================================================
-# USER HOME
-# ======================================================
+    with st.expander("Or set location manually"):
+        lat = st.number_input("Latitude", value=st.session_state.user_location[0], step=0.0001)
+        lon = st.number_input("Longitude", value=st.session_state.user_location[1], step=0.0001)
+        if st.button("Save manual location"):
+            st.session_state.user_location = (lat, lon)
+            st.success("Location saved!")
 
-def user_home():
-    st.title("✨ LowKey Deals")
+    st.divider()
 
-    st.session_state.user_location = (9.9312, 76.2673)
+    col_title, col_loc = st.columns([4, 1])
+    with col_title:
+        st.title("✨ LowKey Deals")
+        st.markdown("### Highkey savings on local appliances")
+    with col_loc:
+        st.caption("📍 Your location")
+        st.code(f"{st.session_state.user_location[0]:.4f}, {st.session_state.user_location[1]:.4f}")
 
-    search = st.text_input("Search Product")
-
-    if search:
-        cursor.execute("SELECT * FROM products WHERE name LIKE ?", ('%' + search + '%',))
+    # ── Sales section ──
+    st.subheader("🔥 Hot Sales Right Now")
+    sales = [(item, o) for item, offers in GLOBAL_CATALOG.items() for o in offers if o.get("is_sale")]
+    if sales:
+        cols = st.columns(3)
+        for i, (name, o) in enumerate(sales):
+            dist = geodesic(st.session_state.user_location, o["loc"]).km
+            with cols[i % 3]:
+                st.markdown(f"""
+                <div class="deal-card">
+                    <span class="badge">SALE 🔥</span>
+                    <h4>{name}</h4>
+                    <p>{o['desc'][:60]}{'...' if len(o['desc']) > 60 else ''}</p>
+                    <del>₹{o['price']:,}</del> <span class="price-tag">₹{o['sale_price']:,}</span>
+                    <div style="font-size:0.85rem;color:#666;margin-top:8px;">≈ {dist:.1f} km</div>
+                </div>
+                """, unsafe_allow_html=True)
+                if st.button("View", key=f"sale_{i}"):
+                    st.session_state.selected_item = name
+                    st.rerun()
     else:
-        cursor.execute("SELECT * FROM products")
+        st.info("No active sales at the moment.")
 
-    products = cursor.fetchall()
+    # ── Search & catalog ──
+    search = st.text_input("🔍 Search appliances...", "")
+    items = list(GLOBAL_CATALOG.keys())
+    if search:
+        items = difflib.get_close_matches(search, items, n=5, cutoff=0.5)
 
-    if not products:
-        st.info("No products available")
-        return
+    if 'selected_item' in st.session_state:
+        name = st.session_state.selected_item
+        offers = GLOBAL_CATALOG.get(name, [])
+        if offers:
+            st.header(name)
+            for o in offers:
+                dist = geodesic(st.session_state.user_location, o["loc"]).km
+                price = o["sale_price"] if o.get("is_sale") else o["price"]
+                st.markdown(f"""
+                <div class="deal-card">
+                    <h4>{o['store']}</h4>
+                    <p>{o['desc']}</p>
+                    <p class="price-tag">₹{price:,}</p>
+                    <div>≈ {dist:.1f} km</div>
+                </div>
+                """, unsafe_allow_html=True)
+            if st.button("← Back"):
+                if 'selected_item' in st.session_state:
+                    del st.session_state.selected_item
+                st.rerun()
+        else:
+            st.info("No offers found.")
+    else:
+        st.subheader("Available Appliances")
+        cols = st.columns(3)
+        for i, name in enumerate(items):
+            offers = GLOBAL_CATALOG[name]
+            if not offers: continue
+            min_price = min(o["sale_price"] if o.get("is_sale") else o["price"] for o in offers)
+            min_dist = min(geodesic(st.session_state.user_location, o["loc"]).km for o in offers)
+            with cols[i % 3]:
+                st.markdown(f"""
+                <div class="deal-card">
+                    <h4>{name}</h4>
+                    <p class="price-tag">From ₹{min_price:,}</p>
+                    <div style="color:#666;">Closest ≈ {min_dist:.1f} km</div>
+                </div>
+                """, unsafe_allow_html=True)
+                if st.button("View offers", key=f"view_{i}_{name}"):
+                    st.session_state.selected_item = name
+                    st.rerun()
 
-    for product in products:
-        product_id, name, desc, price, sale_price, store_username = product
+# ────────────────────────────────────────────────
+# AUTHENTICATION PAGE
+# ────────────────────────────────────────────────
+def auth_page():
+    st.title("Welcome to LowKey Deals")
+    st.markdown("**Lowkey the best prices near you** 💸", unsafe_allow_html=True)
 
-        cursor.execute("SELECT * FROM sellers WHERE username=?", (store_username,))
-        seller = cursor.fetchone()
+    tab1, tab2 = st.tabs(["Login", "Sign Up"])
 
-        store_name = seller[1]
-        address = seller[2]
-        store_loc = (seller[3], seller[4])
+    with tab1:
+        role = st.radio("I am a", ["User", "Seller"])
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
 
-        dist = geodesic(st.session_state.user_location, store_loc).km
-        final_price = sale_price if sale_price and sale_price < price else price
+        if st.button("Login"):
+            if role == "User":
+                if username in st.session_state.users and st.session_state.users[username] == password:
+                    st.session_state.authenticated = True
+                    st.session_state.role = "User"
+                    st.session_state.username = username
+                    st.rerun()
+                else:
+                    st.error("Invalid credentials")
+            else:
+                if username in st.session_state.sellers and st.session_state.sellers[username]["password"] == password:
+                    st.session_state.authenticated = True
+                    st.session_state.role = "Seller"
+                    st.session_state.username = username
+                    st.session_state.store_info = st.session_state.sellers[username]
+                    st.rerun()
+                else:
+                    st.error("Invalid credentials")
 
-        st.markdown("---")
-        st.subheader(name)
-        st.write(f"🏪 {store_name}")
-        st.write(f"📍 {address}")
-        st.write(f"💰 ₹{final_price}")
-        st.write(f"🚗 {dist:.1f} km away")
+    with tab2:
+        role = st.radio("Sign up as", ["User", "Seller"])
+        username = st.text_input("Choose username")
+        password = st.text_input("Choose password", type="password")
 
-        rating = st.slider("Rate this product", 1, 5, key=f"rate_{product_id}")
-        comment = st.text_input("Comment", key=f"comment_{product_id}")
+        store_data = {}
+        if role == "Seller":
+            store_data["store_name"] = st.text_input("Store Name")
+            store_data["address"] = st.text_input("Store Address")
+            store_data["loc"] = (
+                st.number_input("Latitude", value=9.93),
+                st.number_input("Longitude", value=76.27)
+            )
+            store_data["open_hours"] = (
+                st.number_input("Opens at (hour)", 0, 23, 9),
+                st.number_input("Closes at (hour)", 0, 23, 21)
+            )
+            store_data["open_days"] = st.multiselect(
+                "Open days",
+                list(calendar.day_name),
+                default=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"]
+            )
 
-        if st.button("Submit Review", key=f"review_{product_id}"):
-            cursor.execute("""
-            INSERT INTO reviews (product_id, username, rating, comment)
-            VALUES (?, ?, ?, ?)
-            """, (product_id, st.session_state.username, rating, comment))
-            conn.commit()
-            st.success("Review submitted!")
+        if st.button("Sign Up"):
+            if role == "User":
+                if username in st.session_state.users:
+                    st.error("Username taken")
+                else:
+                    st.session_state.users[username] = password
+                    st.success("Account created. Please log in.")
+            else:
+                if username in st.session_state.sellers:
+                    st.error("Username taken")
+                elif not store_data.get("store_name"):
+                    st.error("Store name required")
+                else:
+                    st.session_state.sellers[username] = {
+                        "password": password,
+                        **store_data
+                    }
+                    st.success("Seller account created. Please log in.")
 
-# ======================================================
-# MAIN FLOW
-# ======================================================
+# ────────────────────────────────────────────────
+# MAIN APPLICATION FLOW
+# ────────────────────────────────────────────────
+apply_theme()
+init_data()
 
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-if not st.session_state.authenticated:
-    login_page()
+if not st.session_state.get("authenticated", False):
+    auth_page()
 else:
     with st.sidebar:
-        st.write(f"Welcome {st.session_state.username}")
+        st.markdown(f"**Welcome, {st.session_state.username}** 👋")
+        st.caption(f"Role: {st.session_state.role}")
+
+        if st.session_state.role == "Seller":
+            nav = st.radio("Dashboard", ["Home", "Manage Inventory"])
+        else:
+            nav = st.radio("Dashboard", ["Home"])
+
+        st.divider()
         if st.button("Logout"):
-            st.session_state.clear()
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
             st.rerun()
 
-    if st.session_state.role == "Seller":
-        seller_dashboard()
+    if nav == "Manage Inventory" and st.session_state.role == "Seller":
+        admin_page()
     else:
-        user_home()
+        home_page()
