@@ -1,199 +1,216 @@
 import streamlit as st
-import difflib
+import sqlite3
 from geopy.distance import geodesic
-from datetime import datetime
+import difflib
 import calendar
+from datetime import datetime
 
 st.set_page_config(page_title="LowKey Deals", layout="wide", page_icon="✨")
 
 # ======================================================
-# GLOBAL SHARED CATALOG (SHARED ACROSS ALL USERS)
+# DATABASE SETUP
 # ======================================================
 
-@st.cache_resource
-def get_global_catalog():
-    return {}
+conn = sqlite3.connect("lowkey_deals.db", check_same_thread=False)
+cursor = conn.cursor()
 
-GLOBAL_CATALOG = get_global_catalog()
+def create_tables():
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        username TEXT PRIMARY KEY,
+        password TEXT,
+        role TEXT
+    )
+    """)
 
-# ======================================================
-# INITIAL DATA
-# ======================================================
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS sellers (
+        username TEXT PRIMARY KEY,
+        store_name TEXT,
+        address TEXT,
+        lat REAL,
+        lon REAL,
+        open_from INTEGER,
+        open_to INTEGER
+    )
+    """)
 
-def init_data():
-    if "users" not in st.session_state:
-        st.session_state.users = {"user1": "pass1"}
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS products (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        description TEXT,
+        price REAL,
+        sale_price REAL,
+        store_username TEXT
+    )
+    """)
 
-    if "sellers" not in st.session_state:
-        st.session_state.sellers = {
-            "seller1": {
-                "password": "pass1",
-                "store_name": "Appliance World",
-                "loc": (9.95, 76.29),
-                "open_hours": (9, 21),
-                "open_days": list(calendar.day_name),
-                "address": "123 Kochi St, Kerala"
-            }
-        }
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS reviews (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        product_id INTEGER,
+        username TEXT,
+        rating INTEGER,
+        comment TEXT
+    )
+    """)
+    conn.commit()
 
-    if "authenticated" not in st.session_state:
-        st.session_state.authenticated = False
-
-    if "user_location" not in st.session_state:
-        st.session_state.user_location = (9.9312, 76.2673)
-
-# ======================================================
-# CATALOG FUNCTIONS
-# ======================================================
-
-def add_or_update_offer(product_name, offer):
-    if product_name not in GLOBAL_CATALOG:
-        GLOBAL_CATALOG[product_name] = []
-
-    updated = False
-    for i, existing in enumerate(GLOBAL_CATALOG[product_name]):
-        if existing["store"] == offer["store"]:
-            GLOBAL_CATALOG[product_name][i] = offer
-            updated = True
-            break
-
-    if not updated:
-        GLOBAL_CATALOG[product_name].append(offer)
+create_tables()
 
 # ======================================================
-# SELLER PAGE
+# AUTH
 # ======================================================
 
-def seller_page():
-    st.title("📦 Manage Inventory")
-
-    with st.form("add_product"):
-        name = st.text_input("Product Name")
-        desc = st.text_area("Description")
-        price = st.number_input("Price (₹)", min_value=0.0)
-        sale_price = st.number_input("Sale Price (₹ optional)", min_value=0.0)
-
-        submit = st.form_submit_button("Add / Update Product")
-
-        if submit:
-            if not name:
-                st.error("Product name required")
-                return
-
-            store_info = st.session_state.store_info
-            is_sale = sale_price > 0 and sale_price < price
-
-            offer = {
-                "store": store_info["store_name"],
-                "address": store_info["address"],
-                "loc": store_info["loc"],
-                "price": price,
-                "sale_price": sale_price if is_sale else None,
-                "is_sale": is_sale,
-                "desc": desc,
-                "reviews": [],
-                "open_hours": store_info["open_hours"],
-                "open_days": store_info["open_days"]
-            }
-
-            add_or_update_offer(name, offer)
-            st.success("Product Added/Updated Successfully 🎉")
-            st.rerun()
-
-# ======================================================
-# USER HOME PAGE
-# ======================================================
-
-def user_home():
-    st.title("✨ LowKey Deals")
-    st.write("Lowkey the best prices near you 💸")
-
-    if not GLOBAL_CATALOG:
-        st.info("No products available yet.")
-        return
-
-    search = st.text_input("🔍 Search Product")
-
-    items = list(GLOBAL_CATALOG.keys())
-
-    if search:
-        items = difflib.get_close_matches(search, items, n=5, cutoff=0.3)
-
-    for item in items:
-        st.subheader(item)
-        offers = GLOBAL_CATALOG[item]
-
-        prices = [
-            o["sale_price"] if o["is_sale"] else o["price"]
-            for o in offers
-        ]
-
-        min_price = min(prices)
-        st.write(f"💰 Starting from ₹{min_price}")
-
-        for o in offers:
-            dist = geodesic(st.session_state.user_location, o["loc"]).km
-            price = o["sale_price"] if o["is_sale"] else o["price"]
-
-            st.markdown("---")
-            st.write(f"🏪 {o['store']}")
-            st.write(f"📍 {o['address']}")
-            st.write(f"💵 Price: ₹{price}")
-            st.write(f"🚗 Distance: {dist:.1f} km")
-
-# ======================================================
-# AUTH PAGE
-# ======================================================
-
-def auth_page():
-    st.title("Welcome to LowKey Deals")
+def login_page():
+    st.title("🔐 Login")
 
     role = st.radio("Login As", ["User", "Seller"])
     username = st.text_input("Username")
     password = st.text_input("Password", type="password")
 
     if st.button("Login"):
-        if role == "User":
-            if username in st.session_state.users and st.session_state.users[username] == password:
-                st.session_state.authenticated = True
-                st.session_state.role = "User"
-                st.session_state.username = username
-                st.rerun()
-            else:
-                st.error("Invalid User Credentials")
+        cursor.execute("SELECT * FROM users WHERE username=? AND password=? AND role=?",
+                       (username, password, role))
+        user = cursor.fetchone()
+        if user:
+            st.session_state.authenticated = True
+            st.session_state.username = username
+            st.session_state.role = role
+            st.rerun()
+        else:
+            st.error("Invalid credentials")
 
-        if role == "Seller":
-            if username in st.session_state.sellers and st.session_state.sellers[username]["password"] == password:
-                st.session_state.authenticated = True
-                st.session_state.role = "Seller"
-                st.session_state.username = username
-                st.session_state.store_info = st.session_state.sellers[username]
-                st.rerun()
-            else:
-                st.error("Invalid Seller Credentials")
+    st.divider()
+    st.subheader("Sign Up")
+
+    new_user = st.text_input("New Username")
+    new_pass = st.text_input("New Password", type="password")
+    new_role = st.radio("Role", ["User", "Seller"], key="signup_role")
+
+    if st.button("Create Account"):
+        try:
+            cursor.execute("INSERT INTO users VALUES (?, ?, ?)",
+                           (new_user, new_pass, new_role))
+            conn.commit()
+            st.success("Account created! Please login.")
+        except:
+            st.error("Username already exists")
+
+# ======================================================
+# SELLER DASHBOARD
+# ======================================================
+
+def seller_dashboard():
+    st.title("📦 Manage Inventory")
+
+    cursor.execute("SELECT * FROM sellers WHERE username=?", (st.session_state.username,))
+    seller = cursor.fetchone()
+
+    if not seller:
+        st.subheader("Setup Store")
+        store_name = st.text_input("Store Name")
+        address = st.text_input("Address")
+        lat = st.number_input("Latitude", value=9.93)
+        lon = st.number_input("Longitude", value=76.27)
+        open_from = st.number_input("Open From (0-23)", 0, 23, 9)
+        open_to = st.number_input("Close At (0-23)", 0, 23, 21)
+
+        if st.button("Save Store"):
+            cursor.execute("""
+            INSERT INTO sellers VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (st.session_state.username, store_name, address, lat, lon, open_from, open_to))
+            conn.commit()
+            st.success("Store Created!")
+            st.rerun()
+        return
+
+    st.subheader("Add Product")
+
+    name = st.text_input("Product Name")
+    desc = st.text_area("Description")
+    price = st.number_input("Price", min_value=0.0)
+    sale_price = st.number_input("Sale Price", min_value=0.0)
+
+    if st.button("Add Product"):
+        cursor.execute("""
+        INSERT INTO products (name, description, price, sale_price, store_username)
+        VALUES (?, ?, ?, ?, ?)
+        """, (name, desc, price, sale_price, st.session_state.username))
+        conn.commit()
+        st.success("Product Added!")
+
+# ======================================================
+# USER HOME
+# ======================================================
+
+def user_home():
+    st.title("✨ LowKey Deals")
+
+    st.session_state.user_location = (9.9312, 76.2673)
+
+    search = st.text_input("Search Product")
+
+    if search:
+        cursor.execute("SELECT * FROM products WHERE name LIKE ?", ('%' + search + '%',))
+    else:
+        cursor.execute("SELECT * FROM products")
+
+    products = cursor.fetchall()
+
+    if not products:
+        st.info("No products available")
+        return
+
+    for product in products:
+        product_id, name, desc, price, sale_price, store_username = product
+
+        cursor.execute("SELECT * FROM sellers WHERE username=?", (store_username,))
+        seller = cursor.fetchone()
+
+        store_name = seller[1]
+        address = seller[2]
+        store_loc = (seller[3], seller[4])
+
+        dist = geodesic(st.session_state.user_location, store_loc).km
+        final_price = sale_price if sale_price and sale_price < price else price
+
+        st.markdown("---")
+        st.subheader(name)
+        st.write(f"🏪 {store_name}")
+        st.write(f"📍 {address}")
+        st.write(f"💰 ₹{final_price}")
+        st.write(f"🚗 {dist:.1f} km away")
+
+        rating = st.slider("Rate this product", 1, 5, key=f"rate_{product_id}")
+        comment = st.text_input("Comment", key=f"comment_{product_id}")
+
+        if st.button("Submit Review", key=f"review_{product_id}"):
+            cursor.execute("""
+            INSERT INTO reviews (product_id, username, rating, comment)
+            VALUES (?, ?, ?, ?)
+            """, (product_id, st.session_state.username, rating, comment))
+            conn.commit()
+            st.success("Review submitted!")
 
 # ======================================================
 # MAIN FLOW
 # ======================================================
 
-init_data()
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    auth_page()
+    login_page()
 else:
     with st.sidebar:
-        st.write(f"Welcome {st.session_state.username} 👋")
-
-        if st.session_state.role == "Seller":
-            page = st.radio("Menu", ["Home", "Manage Inventory"])
-        else:
-            page = "Home"
-
+        st.write(f"Welcome {st.session_state.username}")
         if st.button("Logout"):
             st.session_state.clear()
             st.rerun()
 
-    if page == "Manage Inventory":
-        seller_page()
+    if st.session_state.role == "Seller":
+        seller_dashboard()
     else:
         user_home()
