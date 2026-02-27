@@ -128,7 +128,7 @@ def init_data():
         st.session_state.role = None
 
 # ────────────────────────────────────────────────
-# SELLER — MANAGE INVENTORY (delete + price update)
+# SELLER — MANAGE INVENTORY
 # ────────────────────────────────────────────────
 def admin_page():
     st.title("📦 Manage Inventory")
@@ -303,23 +303,26 @@ def home_page():
 
     # ───── Location selector ─────
     st.subheader("📍 Your Location")
-    components.html("""
-        <button onclick="getLocation()" style="background:#8B4513;color:white;padding:10px 20px;border:none;border-radius:20px;cursor:pointer;">
-            Get my location
-        </button>
-        <script>
-        function getLocation() {
-            if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(pos => {
-                    const url = new URL(window.location);
-                    url.searchParams.set('lat', pos.coords.latitude);
-                    url.searchParams.set('lon', pos.coords.longitude);
-                    window.location = url;
-                }, err => alert("Location access denied or unavailable"));
+
+    # "Get My Location" button only shown to regular users (not sellers)
+    if st.session_state.get("role") == "User":
+        components.html("""
+            <button onclick="getLocation()" style="background:#8B4513;color:white;padding:10px 20px;border:none;border-radius:20px;cursor:pointer;">
+                Get my location
+            </button>
+            <script>
+            function getLocation() {
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(pos => {
+                        const url = new URL(window.location);
+                        url.searchParams.set('lat', pos.coords.latitude);
+                        url.searchParams.set('lon', pos.coords.longitude);
+                        window.location = url;
+                    }, err => alert("Location access denied or unavailable"));
+                }
             }
-        }
-        </script>
-    """, height=70)
+            </script>
+        """, height=70)
 
     q = st.query_params
     if 'lat' in q and 'lon' in q:
@@ -444,9 +447,15 @@ def home_page():
                 img_url = f"https://loremflickr.com/320/180/appliance,{item_name.lower().replace(' ','_')}"
                 st.image(img_url, use_column_width=True)
 
+                # Fixed Google Maps directions - opens in new tab
                 maps_url = f"https://www.google.com/maps/dir/?api=1&origin={user_loc[0]},{user_loc[1]}&destination={o['loc'][0]},{o['loc'][1]}"
-                if st.button("Get Directions on Google Maps 🗺️", key=f"directions_{o['store']}_{item_name}", type="primary"):
-                    st.markdown(f'<meta http-equiv="refresh" content="0;url={maps_url}">', unsafe_allow_html=True)
+                st.markdown(
+                    f'<a href="{maps_url}" target="_blank" rel="noopener noreferrer">'
+                    f'<button style="background:#1e90ff;color:white;border:none;border-radius:999px;padding:0.6rem 1.4rem;font-weight:600;width:100%;cursor:pointer;">'
+                    f'Get Directions on Google Maps 🗺️'
+                    f'</button></a>',
+                    unsafe_allow_html=True
+                )
 
                 with st.expander("Reviews 📝"):
                     if o.get("reviews"):
@@ -471,13 +480,12 @@ def home_page():
                                 st.success("Review added! Thank you!")
                                 st.rerun()
 
-                # ── NEW: Price Report Section ──
+                # Price Report Section
                 if st.session_state.role == "User":
                     with st.expander("Report the price you actually paid"):
                         st.write("Help keep prices accurate — share what you paid (optional bill upload).")
                         paid_price = st.number_input("Price you paid (₹)", min_value=0.0, step=100.0, key=f"paid_{o['store']}_{item_name}")
                         bill_file = st.file_uploader("Upload bill photo/PDF (optional)", type=["jpg", "png", "pdf", "jpeg"], key=f"bill_{o['store']}_{item_name}")
-
                         if st.button("Submit Price Report", key=f"report_price_{o['store']}_{item_name}"):
                             if paid_price > 0:
                                 report = {
@@ -490,7 +498,6 @@ def home_page():
                                     o["price_reports"] = []
                                 o["price_reports"].append(report)
 
-                                # Optional: simple acknowledgment of file
                                 if bill_file:
                                     st.info(f"Bill '{bill_file.name}' received (verification pending)")
 
@@ -499,7 +506,7 @@ def home_page():
                             else:
                                 st.error("Please enter a valid price.")
 
-                # Optional: show existing reports (for demo / future use)
+                # Show existing reports
                 if "price_reports" in o and o["price_reports"]:
                     with st.expander("Community reported prices", expanded=False):
                         for r in o["price_reports"]:
