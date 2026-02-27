@@ -70,7 +70,7 @@ def apply_theme():
 
 # --- 2. DATA INITIALIZATION ---
 def init_data():
-    # Force 'items' to be a dictionary if it's missing or corrupted
+    # 1. Initialize if missing OR if it's the wrong type
     if 'items' not in st.session_state or not isinstance(st.session_state.items, dict):
         st.session_state.items = {
             "Refrigerator": {"desc": "Double door, 250L", "price": 25000, "loc": (18.52, 73.85), "trend": "🔥 Hot Deal"},
@@ -79,8 +79,6 @@ def init_data():
     
     if 'authenticated' not in st.session_state:
         st.session_state.authenticated = False
-    if 'user_location' not in st.session_state:
-        st.session_state.user_location = (18.5204, 73.8567)
 
 
 # --- 3. UI PAGES ---
