@@ -128,7 +128,7 @@ def init_data():
         st.session_state.role = None
 
 # ────────────────────────────────────────────────
-# SELLER — MANAGE INVENTORY
+# SELLER — MANAGE INVENTORY (now with store location update)
 # ────────────────────────────────────────────────
 def admin_page():
     st.title("📦 Manage Inventory")
@@ -142,7 +142,33 @@ def admin_page():
 
     st.markdown(f"**Store:** {store['store_name']}  •  {store['address']}")
 
-    # CSV Bulk Upload
+    # ───── Update Store Location (NEW) ─────
+    st.divider()
+    st.subheader("Update Store Location")
+
+    current_lat, current_lon = store.get("loc", (9.93, 76.27))  # fallback to Kochi default
+
+    with st.form("update_store_location"):
+        new_lat = st.number_input("Latitude", value=current_lat, format="%.6f", step=0.000001)
+        new_lon = st.number_input("Longitude", value=current_lon, format="%.6f", step=0.000001)
+
+        if st.form_submit_button("Save New Location"):
+            # Update seller's profile
+            store["loc"] = (new_lat, new_lon)
+            st.session_state.store_info = store  # sync session state
+
+            # Also update location in all products this seller owns
+            updated_count = 0
+            for product_name, offers in GLOBAL_CATALOG.items():
+                for offer in offers:
+                    if offer.get("seller_username") == current_user:
+                        offer["loc"] = (new_lat, new_lon)
+                        updated_count += 1
+
+            st.success(f"Store location updated! Applied to {updated_count} product offer(s).")
+            st.rerun()
+
+    # ───── CSV Bulk Upload ─────
     with st.expander("Bulk upload via CSV", expanded=False):
         st.caption("Columns: name, desc, price, sale_price (optional)")
         uploaded = st.file_uploader("Choose CSV file", type="csv", key="csv_upload")
@@ -218,7 +244,7 @@ def admin_page():
                 "seller_username": current_user,
                 "store": store["store_name"],
                 "address": store["address"],
-                "loc": store["loc"],
+                "loc": store["loc"],  # uses the latest store location
                 "price": price,
                 "sale_price": sale_price_input if is_sale else None,
                 "is_sale": is_sale,
@@ -301,11 +327,10 @@ def home_page():
     st.title("✨ LowKey Deals")
     st.caption("Discover the best local appliance prices near you")
 
-    # ───── Location selector ─────
-    st.subheader("📍 Your Location")
-
-    # "Get My Location" button only shown to regular users (not sellers)
+    # Location section — only for regular users
     if st.session_state.get("role") == "User":
+        st.subheader("📍 Your Location")
+
         components.html("""
             <button onclick="getLocation()" style="background:#8B4513;color:white;padding:10px 20px;border:none;border-radius:20px;cursor:pointer;">
                 Get my location
@@ -324,32 +349,24 @@ def home_page():
             </script>
         """, height=70)
 
-    q = st.query_params
-    if 'lat' in q and 'lon' in q:
-        try:
-            lat = float(q['lat'][0])
-            lon = float(q['lon'][0])
-            st.session_state.user_location = (lat, lon)
-            st.success("Location updated")
-        except:
-            pass
+        q = st.query_params
+        if 'lat' in q and 'lon' in q:
+            try:
+                lat = float(q['lat'][0])
+                lon = float(q['lon'][0])
+                st.session_state.user_location = (lat, lon)
+                st.success("Location updated")
+            except:
+                pass
 
-    with st.expander("Or set location manually"):
-        lat = st.number_input("Latitude", value=st.session_state.user_location[0], step=0.00001, format="%.6f")
-        lon = st.number_input("Longitude", value=st.session_state.user_location[1], step=0.00001, format="%.6f")
-        if st.button("Save"):
-            st.session_state.user_location = (lat, lon)
-            st.rerun()
+        with st.expander("Or set location manually"):
+            lat = st.number_input("Latitude", value=st.session_state.user_location[0], step=0.00001, format="%.6f")
+            lon = st.number_input("Longitude", value=st.session_state.user_location[1], step=0.00001, format="%.6f")
+            if st.button("Save"):
+                st.session_state.user_location = (lat, lon)
+                st.rerun()
 
-    st.divider()
-
-    col_title, col_loc = st.columns([4, 1])
-    with col_title:
-        st.title("✨ LowKey Deals")
-        st.markdown("### Highkey savings on local appliances")
-    with col_loc:
-        st.caption("📍 Current location")
-        st.code(f"Lat: {st.session_state.user_location[0]:.4f}   Lon: {st.session_state.user_location[1]:.4f}")
+        st.divider()
 
     # ───── Hot sales section ─────
     st.subheader("🔥 Ongoing Sales")
@@ -447,7 +464,6 @@ def home_page():
                 img_url = f"https://loremflickr.com/320/180/appliance,{item_name.lower().replace(' ','_')}"
                 st.image(img_url, use_column_width=True)
 
-                # Fixed Google Maps directions - opens in new tab
                 maps_url = f"https://www.google.com/maps/dir/?api=1&origin={user_loc[0]},{user_loc[1]}&destination={o['loc'][0]},{o['loc'][1]}"
                 st.markdown(
                     f'<a href="{maps_url}" target="_blank" rel="noopener noreferrer">'
@@ -506,7 +522,6 @@ def home_page():
                             else:
                                 st.error("Please enter a valid price.")
 
-                # Show existing reports
                 if "price_reports" in o and o["price_reports"]:
                     with st.expander("Community reported prices", expanded=False):
                         for r in o["price_reports"]:
