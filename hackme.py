@@ -155,12 +155,21 @@ def init_data():
     if 'authenticated' not in st.session_state:
         st.session_state.authenticated = False
     if 'user_location' not in st.session_state:
-        st.session_state.user_location = (9.9312, 76.2673)  # Kochi, Kerala (default)
+        st.session_state.user_location = (9.9312, 76.2673) # Kochi, Kerala (default)
+
+# --- Helper to force refresh catalog for all viewers ---
+def refresh_catalog():
+    if 'item_offers' in st.session_state:
+        # Minimal trick: force Streamlit to consider it "dirty"
+        st.session_state.item_offers = st.session_state.item_offers.copy()
+    # You can also add version counter if needed later
+    if 'catalog_version' not in st.session_state:
+        st.session_state.catalog_version = 0
+    st.session_state.catalog_version += 1
 
 # --- 3. UI PAGES ---
 def admin_page():
     st.title("📦 Inventory Manager")
-
     with st.expander("💡 CSV Format Instructions"):
         st.write("Your CSV should have these columns: `name`, `desc`, `price`, `sale_price` (optional)")
     uploaded_file = st.file_uploader("Bulk Upload via CSV", type="csv")
@@ -183,7 +192,7 @@ def admin_page():
                     "sale_price": sale_price if is_sale else None,
                     "is_sale": is_sale,
                     "desc": desc,
-                    "reviews": [],  # Reviews not from CSV
+                    "reviews": [], # Reviews not from CSV
                     "open_hours": store_info["open_hours"],
                     "open_days": store_info["open_days"]
                 }
@@ -199,6 +208,7 @@ def admin_page():
                 if not updated:
                     st.session_state.item_offers[name].append(offer)
                 added_count += 1
+            refresh_catalog()           # ← added
             st.success(f"Imported/Updated {added_count} items!")
         except Exception as e:
             st.error(f"Error: {e}")
@@ -237,6 +247,8 @@ def admin_page():
                         break
                 if not updated:
                     st.session_state.item_offers[name].append(offer)
+                
+                refresh_catalog()           # ← added
                 st.toast(f"Success! {name} is now live/updated.")
             else:
                 st.error("Product name is required.")
@@ -269,12 +281,10 @@ def home_page():
         </script>
     """, height=60)
 
-    # Check query params for location (modern Streamlit API)
+    # Check query params for location
     query_params = st.query_params
-
     lat_str = query_params.get('lat')
     lon_str = query_params.get('lon')
-
     if lat_str and lon_str:
         try:
             lat = float(lat_str[0])
@@ -330,7 +340,6 @@ def home_page():
 
     # Search Bar
     search_input = st.text_input("🔍 Search for appliances...", placeholder="Type 'Refrigerator'...", key="main_search")
-
     if search_input:
         all_items = list(st.session_state.item_offers.keys())
         suggestions = difflib.get_close_matches(search_input, all_items, n=5, cutoff=0.5)
@@ -356,9 +365,9 @@ def home_page():
             current_day = current_time.strftime("%A")
             annotated_offers = []
             prices = [o["sale_price"] if o["is_sale"] else o["price"] for o in offers]
-            min_price = min(prices)
-            max_price = max(prices)
-            lowest_store = next(o["store"] for o in offers if (o["sale_price"] if o["is_sale"] else o["price"]) == min_price)
+            min_price = min(prices) if prices else 0
+            max_price = max(prices) if prices else 0
+            lowest_store = next((o["store"] for o in offers if (o["sale_price"] if o["is_sale"] else o["price"]) == min_price), "—")
             st.info(f"Lowest price at: {lowest_store} (₹{min_price:,}) 💰")
             for o in offers:
                 dist = geodesic(user_loc, o["loc"]).km
@@ -398,7 +407,7 @@ def home_page():
                         st.write("Your Rating")
                         rating_options = ["1 ⭐", "2 ⭐⭐", "3 ⭐⭐⭐", "4 ⭐⭐⭐⭐", "5 ⭐⭐⭐⭐⭐"]
                         rating_str = st.radio("", rating_options, horizontal=True)
-                        rating = int(rating_str[0])  # Extract number
+                        rating = int(rating_str[0])
                         text = st.text_area("Your Review")
                         if st.form_submit_button("Submit Review"):
                             o["reviews"].append({"user": st.session_state.username, "rating": rating, "text": text})
@@ -410,13 +419,14 @@ def home_page():
                         bill_upload = st.file_uploader("Upload Bill (for verification)", type=["jpg", "png", "pdf"])
                         if st.form_submit_button("Submit Purchase"):
                             if bought_price > 0 and bill_upload:
-                                # Mock verification
                                 st.success("Purchase reported and bill verified! Price updated.")
-                                o["price"] = bought_price  # Update price (mock)
+                                o["price"] = bought_price
+                                refresh_catalog()     # ← added (price changed → catalog refresh)
                             else:
                                 st.error("Please enter price and upload bill.")
             if st.button("⬅️ Back to Browse"):
-                del st.session_state.selected_item
+                if 'selected_item' in st.session_state:
+                    del st.session_state.selected_item
                 st.rerun()
         else:
             st.warning("No offers available for this item. 😕")
@@ -432,8 +442,8 @@ def home_page():
             for i, name in enumerate(all_items):
                 offers = st.session_state.item_offers[name]
                 prices = [o["sale_price"] if o["is_sale"] else o["price"] for o in offers]
-                min_price = min(prices)
-                min_dist = min(geodesic(user_loc, o["loc"]).km for o in offers)
+                min_price = min(prices) if prices else 0
+                min_dist = min(geodesic(user_loc, o["loc"]).km for o in offers) if offers else 999
                 with cols[i % 3]:
                     st.markdown(f"""
                     <div class="deal-card">
@@ -449,7 +459,6 @@ def home_page():
 def auth_page():
     st.title("Welcome to LowKey Deals")
     tab_login, tab_signup = st.tabs(["Login", "Sign Up"])
-
     with tab_login:
         role = st.radio("Select Role", ["User", "Seller"], key="login_role")
         username = st.text_input("Username", placeholder="Enter your username...", key="login_username")
@@ -476,7 +485,6 @@ def auth_page():
                         st.error("Invalid username or password for Seller.")
             else:
                 st.error("Please enter both username and password.")
-
     with tab_signup:
         role = st.radio("Select Role", ["User", "Seller"], key="signup_role")
         username = st.text_input("Username", placeholder="Choose a username...", key="signup_username")
@@ -518,6 +526,7 @@ def auth_page():
 # --- 4. EXECUTION FLOW ---
 apply_theme()
 init_data()
+
 if not st.session_state.authenticated:
     auth_page()
 else:
@@ -527,7 +536,6 @@ else:
             nav = st.radio("Dashboard", ["Home", "Manage Inventory"])
         else:
             nav = "Home"
-
         st.divider()
         if st.button("Logout"):
             for key in list(st.session_state.keys()):
