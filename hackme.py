@@ -127,7 +127,7 @@ def admin_page():
                 st.toast(f"Success! {name} is now live.")
 
 def home_page():
-    # Hero Section
+    # --- 1. HERO SECTION ---
     col_title, col_loc = st.columns([3, 1])
     with col_title:
         st.title("✨ LowKey Deals")
@@ -136,11 +136,21 @@ def home_page():
         st.caption("📍 Current Location")
         st.code("Pune, MH (Mock)")
 
-    # Search Section
+    # --- 2. DATA SAFETY CHECK ---
+    # Ensure items exists and is a dictionary before proceeding
+    if 'items' not in st.session_state or not isinstance(st.session_state.items, dict):
+        st.warning("No inventory found. Please add items in the Manager tab.")
+        # Optional: Re-run init if empty
+        init_data() 
+        return
+
+    items = st.session_state.items
+
+    # --- 3. SEARCH SECTION ---
     search_input = st.text_input("🔍 Search for appliances...", placeholder="Type 'Fridge'...", key="main_search")
     
     if search_input:
-        all_items = list(st.session_state.items.keys())
+        all_items = list(items.keys())
         suggestions = difflib.get_close_matches(search_input, all_items, n=3, cutoff=0.3)
         if suggestions:
             st.write("Did you mean:")
@@ -152,18 +162,19 @@ def home_page():
 
     st.divider()
     
-    if 'selected_item' in st.session_state:
+    # --- 4. DISPLAY LOGIC ---
+    if 'selected_item' in st.session_state and st.session_state.selected_item in items:
         item_name = st.session_state.selected_item
-        item = st.session_state.items[item_name]
+        item = items[item_name]
         
-        # Calculate Distance
         dist = geodesic(st.session_state.user_location, item['loc']).km
 
         c1, c2 = st.columns([1, 1])
         with c1:
+            # Placeholder image based on item name
             st.image(f"https://loremflickr.com/400/300/appliance,{item_name.lower().replace(' ', '')}", use_container_width=True)
         with c2:
-            st.markdown(f"<span class='badge'>{item['trend']}</span>", unsafe_allow_html=True)
+            st.markdown(f"<span class='badge'>{item.get('trend', '🔥 Hot Deal')}</span>", unsafe_allow_html=True)
             st.header(item_name)
             st.write(item['desc'])
             st.metric("Best Price", f"₹{item['price']:,}")
@@ -180,28 +191,30 @@ def home_page():
                 del st.session_state.selected_item
                 st.rerun()
     else:
-        # Product Grid
-        items = st.session_state.items
-        cols = st.columns(3)
-        for i, (name, info) in enumerate(items.items()):
-            # Calculate distance for each card
-            dist = geodesic(st.session_state.user_location, info['loc']).km
-            
-            with cols[i % 3]:
-                st.markdown(f"""
-                <div class="deal-card">
-                    <span class="badge">{info['trend']}</span>
-                    <h4 style="margin-top:10px;">{name}</h4>
-                    <p style="font-size: 0.85rem; color: #555;">{info['desc']}</p>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span class="price-tag">₹{info['price']:,}</span>
-                        <span style="font-size: 0.8rem; color: #888;">📍 {dist:.1f}km</span>
+        # PRODUCT GRID
+        if not items:
+            st.info("The catalog is currently empty.")
+        else:
+            cols = st.columns(3)
+            # Safe iteration using items.items()
+            for i, (name, info) in enumerate(items.items()):
+                dist = geodesic(st.session_state.user_location, info['loc']).km
+                
+                with cols[i % 3]:
+                    st.markdown(f"""
+                    <div class="deal-card">
+                        <span class="badge">{info.get('trend', 'New')}</span>
+                        <h4 style="margin-top:10px;">{name}</h4>
+                        <p style="font-size: 0.85rem; color: #555;">{info['desc']}</p>
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span class="price-tag">₹{info['price']:,}</span>
+                            <span style="font-size: 0.8rem; color: #888;">📍 {dist:.1f}km</span>
+                        </div>
                     </div>
-                </div>
-                """, unsafe_allow_html=True)
-                if st.button(f"View Details", key=f"btn_{name}"):
-                    st.session_state.selected_item = name
-                    st.rerun()
+                    """, unsafe_allow_html=True)
+                    if st.button(f"View Details", key=f"btn_{name}"):
+                        st.session_state.selected_item = name
+                        st.rerun()
 def login_page():
     st.title("Welcome to LowKey Deals")
     
