@@ -76,18 +76,6 @@ def apply_theme():
             background: #A0522D !important;
             transform: scale(1.04);
         }
-        .delete-btn {
-            background: #c0392b !important;
-        }
-        .delete-btn:hover {
-            background: #a93226 !important;
-        }
-        .directions-btn {
-            background: #1e90ff !important;
-        }
-        .directions-btn:hover {
-            background: #187de4 !important;
-        }
         </style>
     """, unsafe_allow_html=True)
 
@@ -128,7 +116,7 @@ def init_data():
         st.session_state.role = None
 
 # ────────────────────────────────────────────────
-# SELLER — MANAGE INVENTORY (now with store location update)
+# SELLER — MANAGE INVENTORY
 # ────────────────────────────────────────────────
 def admin_page():
     st.title("📦 Manage Inventory")
@@ -142,33 +130,7 @@ def admin_page():
 
     st.markdown(f"**Store:** {store['store_name']}  •  {store['address']}")
 
-    # ───── Update Store Location (NEW) ─────
-    st.divider()
-    st.subheader("Update Store Location")
-
-    current_lat, current_lon = store.get("loc", (9.93, 76.27))  # fallback to Kochi default
-
-    with st.form("update_store_location"):
-        new_lat = st.number_input("Latitude", value=current_lat, format="%.6f", step=0.000001)
-        new_lon = st.number_input("Longitude", value=current_lon, format="%.6f", step=0.000001)
-
-        if st.form_submit_button("Save New Location"):
-            # Update seller's profile
-            store["loc"] = (new_lat, new_lon)
-            st.session_state.store_info = store  # sync session state
-
-            # Also update location in all products this seller owns
-            updated_count = 0
-            for product_name, offers in GLOBAL_CATALOG.items():
-                for offer in offers:
-                    if offer.get("seller_username") == current_user:
-                        offer["loc"] = (new_lat, new_lon)
-                        updated_count += 1
-
-            st.success(f"Store location updated! Applied to {updated_count} product offer(s).")
-            st.rerun()
-
-    # ───── CSV Bulk Upload ─────
+    # CSV Bulk Upload
     with st.expander("Bulk upload via CSV", expanded=False):
         st.caption("Columns: name, desc, price, sale_price (optional)")
         uploaded = st.file_uploader("Choose CSV file", type="csv", key="csv_upload")
@@ -244,7 +206,7 @@ def admin_page():
                 "seller_username": current_user,
                 "store": store["store_name"],
                 "address": store["address"],
-                "loc": store["loc"],  # uses the latest store location
+                "loc": store["loc"],
                 "price": price,
                 "sale_price": sale_price_input if is_sale else None,
                 "is_sale": is_sale,
@@ -327,43 +289,76 @@ def home_page():
     st.title("✨ LowKey Deals")
     st.caption("Discover the best local appliance prices near you")
 
-    # Location section — only for regular users
+    # ───── Location selector ───── only for users
     if st.session_state.get("role") == "User":
         st.subheader("📍 Your Location")
 
         components.html("""
-            <button onclick="getLocation()" style="background:#8B4513;color:white;padding:10px 20px;border:none;border-radius:20px;cursor:pointer;">
-                Get my location
+            <button id="getLocBtn" style="background:#8B4513;color:white;padding:12px 24px;border:none;border-radius:999px;cursor:pointer;font-weight:bold;">
+                Get My Location
             </button>
-            <script>
-            function getLocation() {
-                if (navigator.geolocation) {
-                    navigator.geolocation.getCurrentPosition(pos => {
-                        const url = new URL(window.location);
-                        url.searchParams.set('lat', pos.coords.latitude);
-                        url.searchParams.set('lon', pos.coords.longitude);
-                        window.location = url;
-                    }, err => alert("Location access denied or unavailable"));
-                }
-            }
-            </script>
-        """, height=70)
 
+            <div id="locStatus" style="margin-top:10px;color:#555;font-size:0.95rem;"></div>
+
+            <script>
+            document.getElementById("getLocBtn").onclick = function() {
+                const status = document.getElementById("locStatus");
+                status.innerHTML = "Requesting location... Please allow access when prompted.";
+
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition(
+                        (position) => {
+                            const lat = position.coords.latitude.toFixed(6);
+                            const lon = position.coords.longitude.toFixed(6);
+                            status.innerHTML = "Location acquired! Updating page...";
+                            const url = new URL(window.location);
+                            url.searchParams.set('lat', lat);
+                            url.searchParams.set('lon', lon);
+                            window.location = url;
+                        },
+                        (error) => {
+                            let msg = "Could not get location.";
+                            switch(error.code) {
+                                case error.PERMISSION_DENIED:
+                                    msg = "Location permission denied. Please allow access in your browser settings.";
+                                    break;
+                                case error.POSITION_UNAVAILABLE:
+                                    msg = "Location information is unavailable.";
+                                    break;
+                                case error.TIMEOUT:
+                                    msg = "Location request timed out.";
+                                    break;
+                            }
+                            status.innerHTML = msg;
+                            alert(msg + "\\nMake sure location services are enabled on your device.");
+                        },
+                        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+                    );
+                } else {
+                    status.innerHTML = "Geolocation is not supported by your browser.";
+                    alert("Your browser does not support geolocation.");
+                }
+            };
+            </script>
+        """, height=140)
+
+        # Read location from URL params after redirect
         q = st.query_params
         if 'lat' in q and 'lon' in q:
             try:
                 lat = float(q['lat'][0])
                 lon = float(q['lon'][0])
                 st.session_state.user_location = (lat, lon)
-                st.success("Location updated")
+                st.success(f"Location updated: {lat:.6f}, {lon:.6f}")
             except:
-                pass
+                st.warning("Could not parse location from URL.")
 
         with st.expander("Or set location manually"):
             lat = st.number_input("Latitude", value=st.session_state.user_location[0], step=0.00001, format="%.6f")
             lon = st.number_input("Longitude", value=st.session_state.user_location[1], step=0.00001, format="%.6f")
             if st.button("Save"):
                 st.session_state.user_location = (lat, lon)
+                st.success("Manual location saved!")
                 st.rerun()
 
         st.divider()
