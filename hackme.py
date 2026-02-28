@@ -11,8 +11,6 @@ import calendar
 # ────────────────────────────────────────────────
 st.set_page_config(page_title="LowKey Deals", layout="wide", page_icon="✨")
 
-
-
 @st.cache_resource
 def get_shared_catalog():
     return {}
@@ -113,7 +111,7 @@ def init_data():
         st.session_state.role = None
 
 # ────────────────────────────────────────────────
-# SELLER — MANAGE INVENTORY (with refresh & delete fixed)
+# SELLER — MANAGE INVENTORY (with new features)
 # ────────────────────────────────────────────────
 def admin_page():
     st.title("📦 Manage Inventory")
@@ -127,7 +125,7 @@ def admin_page():
 
     st.markdown(f"**Store:** {store['store_name']}  •  {store['address']}")
 
-    # Update Store Location
+    # ───── Update Store Location ─────
     st.divider()
     st.subheader("Update Store Location")
 
@@ -148,7 +146,7 @@ def admin_page():
                         offer["loc"] = (new_lat, new_lon)
                         updated_count += 1
 
-            st.success(f"Store location updated! Applied to {updated_count} offers.")
+            st.success(f"Store location updated! Applied to {updated_count} product offer(s).")
             st.rerun()
 
     # CSV Bulk Upload
@@ -180,7 +178,7 @@ def admin_page():
                         "reviews": [],
                         "open_hours": store["open_hours"],
                         "open_days": store["open_days"],
-                        "in_stock": True
+                        "in_stock": True  # default new items in stock
                     }
 
                     if name not in GLOBAL_CATALOG:
@@ -236,7 +234,7 @@ def admin_page():
                 "reviews": [],
                 "open_hours": store["open_hours"],
                 "open_days": store["open_days"],
-                "in_stock": True
+                "in_stock": True  # default new items in stock
             }
 
             if name not in GLOBAL_CATALOG:
@@ -256,15 +254,10 @@ def admin_page():
         elif submitted:
             st.error("Product name is required")
 
-    # ───── My Added Products ───── with Refresh + Delete
+    # My Products – Delete, Update Price, Toggle Stock
     st.divider()
     st.subheader("My Added Products")
 
-    # Refresh button - forces full list rebuild
-    if st.button("🔄 Refresh Product List"):
-        st.rerun()
-
-    # Build product list
     my_products = []
     for product_name, offers in GLOBAL_CATALOG.items():
         for offer in offers:
@@ -277,65 +270,42 @@ def admin_page():
     if not my_products:
         st.info("You haven't added any products yet.")
     else:
-        for idx, item in enumerate(my_products):
+        for item in my_products:
             name = item["product_name"]
-            offer = item["offer"]
-
-            key_prefix = f"prod_{idx}_{name.replace(' ', '_')}_{current_user}"
+            o = item["offer"]
 
             cols = st.columns([4, 1, 1])
             with cols[0]:
-                current_price = offer.get('sale_price') or offer['price']
-                stock_status = "In Stock ✅" if offer.get("in_stock", True) else "Out of Stock ❌"
+                current_price = o.get('sale_price') or o['price']
+                stock_status = "In Stock ✅" if o.get("in_stock", True) else "Out of Stock ❌"
                 st.markdown(f"**{name}** — ₹{current_price:,}  •  {stock_status}")
 
             with cols[1]:
-                if st.button("✏️ Update Price", key=f"upd_btn_{key_prefix}"):
-                    with st.form(key=f"upd_form_{key_prefix}"):
-                        new_regular = st.number_input("New regular price (₹)", 
-                                                     value=float(offer["price"]), 
-                                                     min_value=0.0, 
-                                                     step=100.0,
-                                                     key=f"reg_{key_prefix}")
-
-                        new_sale = st.number_input("New sale price (optional)", 
-                                                  value=float(offer.get("sale_price") or 0), 
-                                                  min_value=0.0, 
-                                                  step=100.0,
-                                                  key=f"sale_{key_prefix}")
-
+                if st.button("✏️ Update Price", key=f"update_price_{name}_{current_user}"):
+                    with st.form(key=f"price_update_{name}_{current_user}"):
+                        new_price = st.number_input("New regular price (₹)", value=float(o["price"]), min_value=0.0, step=100.0)
+                        new_sale_price = st.number_input("New sale price (optional)", value=float(o.get("sale_price") or 0), min_value=0.0, step=100.0)
                         if st.form_submit_button("Save New Prices"):
-                            offer["price"] = new_regular
-                            if new_sale > 0 and new_sale < new_regular:
-                                offer["sale_price"] = new_sale
-                                offer["is_sale"] = True
+                            o["price"] = new_price
+                            if new_sale_price > 0 and new_sale_price < new_price:
+                                o["sale_price"] = new_sale_price
+                                o["is_sale"] = True
                             else:
-                                offer["sale_price"] = None
-                                offer["is_sale"] = False
-
-                            st.success(f"Price updated → ₹{new_regular:,}")
+                                o["sale_price"] = None
+                                o["is_sale"] = False
+                            st.success(f"Price updated for **{name}**")
                             st.rerun()
 
             with cols[2]:
-                current_stock = offer.get("in_stock", True)
+                # Toggle stock status
+                current_stock = o.get("in_stock", True)
                 btn_text = "Mark Out of Stock" if current_stock else "Mark In Stock"
-                if st.button(btn_text, key=f"stock_{key_prefix}"):
-                    offer["in_stock"] = not current_stock
-                    st.success(f"**{name}** marked as {'In Stock' if offer['in_stock'] else 'Out of Stock'}")
+                if st.button(btn_text, key=f"stock_{name}_{current_user}"):
+                    o["in_stock"] = not current_stock
+                    st.success(f"**{name}** marked as {'In Stock' if o['in_stock'] else 'Out of Stock'}")
                     st.rerun()
 
-                # Delete button
-                if st.button("🗑️ Delete", key=f"del_{key_prefix}", type="primary"):
-                    GLOBAL_CATALOG[name] = [
-                        ex for ex in GLOBAL_CATALOG[name]
-                        if ex.get("seller_username") != current_user
-                    ]
-                    if not GLOBAL_CATALOG[name]:
-                        del GLOBAL_CATALOG[name]
-                    st.success(f"Product **{name}** deleted.")
-                    st.rerun()
-
-    # Reviews & Price Reports
+    # NEW: Seller sees their reviews & price reports
     st.divider()
     st.subheader("My Reviews & Reports")
 
@@ -371,7 +341,7 @@ def home_page():
     st.title("✨ LowKey Deals")
     st.caption("Discover the best local appliance prices near you")
 
-    # Location section — only for users
+    # Location section — only for regular users
     if st.session_state.get("role") == "User":
         st.subheader("📍 Your Location")
 
@@ -392,7 +362,7 @@ def home_page():
                         (position) => {
                             const lat = position.coords.latitude.toFixed(6);
                             const lon = position.coords.longitude.toFixed(6);
-                            status.innerHTML = "Location acquired! Updating page...";
+                            status.innerHTML = "Success! Updating...";
                             const url = new URL(window.location);
                             url.searchParams.set('lat', lat);
                             url.searchParams.set('lon', lon);
@@ -401,24 +371,18 @@ def home_page():
                         (error) => {
                             let msg = "Could not get location.";
                             switch(error.code) {
-                                case error.PERMISSION_DENIED:
-                                    msg = "Location permission denied.";
-                                    break;
-                                case error.POSITION_UNAVAILABLE:
-                                    msg = "Location unavailable.";
-                                    break;
-                                case error.TIMEOUT:
-                                    msg = "Timed out.";
-                                    break;
+                                case error.PERMISSION_DENIED: msg = "Permission denied."; break;
+                                case error.POSITION_UNAVAILABLE: msg = "Location unavailable."; break;
+                                case error.TIMEOUT: msg = "Timed out."; break;
                             }
                             status.innerHTML = msg;
-                            alert(msg + "\\nEnable location in settings.");
+                            alert(msg + "\\nPlease enable location in browser settings.");
                         },
                         { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
                     );
                 } else {
                     status.innerHTML = "Geolocation not supported.";
-                    alert("Browser does not support geolocation.");
+                    alert("Your browser does not support geolocation.");
                 }
             };
             </script>
@@ -443,7 +407,7 @@ def home_page():
 
         st.divider()
 
-    # Hot sales
+    # ───── Hot sales section ─────
     st.subheader("🔥 Ongoing Sales")
     sales_items = []
     for item_name, offers in GLOBAL_CATALOG.items():
@@ -473,7 +437,7 @@ def home_page():
     else:
         st.info("No active sales at the moment.")
 
-    # Search
+    # ───── Search ─────
     search_term = st.text_input("🔍 Search appliances...", placeholder="e.g. Refrigerator, Washing Machine")
     if search_term:
         all_names = list(GLOBAL_CATALOG.keys())
@@ -488,7 +452,7 @@ def home_page():
 
     st.divider()
 
-    # Product detail view
+    # ───── Selected product detail ─────
     if 'selected_item' in st.session_state:
         item_name = st.session_state.selected_item
         offers = GLOBAL_CATALOG.get(item_name, [])
@@ -510,7 +474,7 @@ def home_page():
             annotated_offers = []
             for o in offers:
                 if not o.get("in_stock", True):
-                    continue
+                    continue  # skip out-of-stock
                 dist = geodesic(user_loc, o["loc"]).km
                 reviews = o.get("reviews", [])
                 avg_rating = sum(r["rating"] for r in reviews) / len(reviews) if reviews else 0
@@ -529,7 +493,7 @@ def home_page():
 
             annotated_offers.sort(key=lambda x: x["effort"])
 
-            # Community average price
+            # Show community average price
             all_reports = []
             for o in offers:
                 all_reports.extend(o.get("price_reports", []))
@@ -659,8 +623,6 @@ def home_page():
 # ────────────────────────────────────────────────
 # AUTHENTICATION PAGE
 # ────────────────────────────────────────────────
-
-# Where the system auths
 def auth_page():
     st.title("Welcome to LowKey Deals")
     st.markdown("**Lowkey the best prices near you** 💸", unsafe_allow_html=True)
