@@ -11,6 +11,8 @@ import calendar
 # ────────────────────────────────────────────────
 st.set_page_config(page_title="LowKey Deals", layout="wide", page_icon="✨")
 
+
+
 @st.cache_resource
 def get_shared_catalog():
     return {}
@@ -657,6 +659,8 @@ def home_page():
 # ────────────────────────────────────────────────
 # AUTHENTICATION PAGE
 # ────────────────────────────────────────────────
+
+# Where the system auths
 def auth_page():
     st.title("Welcome to LowKey Deals")
     st.markdown("**Lowkey the best prices near you** 💸", unsafe_allow_html=True)
